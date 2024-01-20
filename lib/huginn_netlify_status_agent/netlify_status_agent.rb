@@ -10,6 +10,8 @@ module Agents
       The Netlify Agent fetches Netlify services  status.
       I added this agent because with website agent, when indicator is empty for "all ok status", no event was created.
 
+      The `debug` can add verbosity.
+
       `expected_receive_period_in_days` is used to determine if the Agent is working. Set it to the maximum number of days
       that you anticipate passing without this Agent receiving an incoming Event.
       MD
@@ -28,6 +30,7 @@ module Agents
 
     def default_options
       {
+        'debug' => 'false',
         'expected_receive_period_in_days' => '2',
         'changes_only' => 'true'
       }
@@ -40,6 +43,10 @@ module Agents
 
       if options.has_key?('changes_only') && boolify(options['changes_only']).nil?
         errors.add(:base, "if provided, changes_only must be true or false")
+      end
+
+      if options.has_key?('debug') && boolify(options['debug']).nil?
+        errors.add(:base, "if provided, debug must be true or false")
       end
 
       unless options['expected_receive_period_in_days'].present? && options['expected_receive_period_in_days'].to_i > 0
@@ -57,26 +64,40 @@ module Agents
 
     private
 
+    def log_curl_output(code,body)
+
+      log "request status : #{code}"
+
+      if interpolated['debug'] == 'true'
+        log "request status : #{code}"
+        log "body"
+        log body
+      end
+
+    end
+
     def check_status()
 
-        uri = URI.parse("https://www.netlifystatus.com/api/v2/status.json")
-        response = Net::HTTP.get_response(uri)
+      uri = URI.parse("https://www.netlifystatus.com/api/v2/status.json")
+      response = Net::HTTP.get_response(uri)
 
-        log "fetch status request status : #{response.code}"
-        parsed_json = JSON.parse(response.body)
-        payload = { :status => { :indicator => "#{parsed_json['status']['indicator']}", :description => "#{parsed_json['status']['description']}" } }
+      log_curl_output(response.code,response.body)
 
-        if interpolated['changes_only'] == 'true'
-          if payload.to_s != memory['last_status']
-            memory['last_status'] = payload.to_s
-            create_event payload: payload
-          end
-        else
-          create_event payload: payload
-          if payload.to_s != memory['last_status']
-            memory['last_status'] = payload.to_s
-          end
+      payload = JSON.parse(response.body)
+      event = payload.dup
+      event = { :status => { :name =>  "#{payload['page']['name']}", :indicator => "#{payload['status']['indicator']}", :description => "#{payload['status']['description']}" } }
+
+      if interpolated['changes_only'] == 'true'
+        if payload != memory['last_status']
+          memory['last_status'] = payload
+          create_event payload: event
         end
+      else
+        create_event payload: event
+        if payload != memory['last_status']
+          memory['last_status'] = payload
+        end
+      end
     end
   end
 end
